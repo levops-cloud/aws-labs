@@ -1,0 +1,480 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: VPC - Linux - Monitoring Server - Systems Operations on AWS
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair
+    Type: String
+  Bucket:
+    Default: aws-training
+    Description: Bucket for staged assets.
+    Type: String
+  Prefix:
+    Default: sys-ops-lab-vpc-monitoring-linux-v1.2/
+    Description: Prefix for staged assets.
+    Type: String
+  InstanceType:
+    Default: m3.medium
+    Description: 'EC2 instance type, e.g. m1.small, m1.large, etc.'
+    Type: String
+    AllowedValues:
+      - t1.micro
+      - m3.medium
+      - m3.large
+      - m3.xlarge
+      - m3.2xlarge
+      - c3.large
+      - c3.xlarge
+Mappings:
+  AWSInstanceType2Arch:
+    m3.medium:
+      Arch: '64'
+    m3.large:
+      Arch: '64'
+    m3.xlarge:
+      Arch: '64'
+    m3.2xlarge:
+      Arch: '64'
+    c3.large:
+      Arch: '64'
+    c3.xlarge:
+      Arch: '64'
+    t1.micro:
+      Arch: '64'
+  AWSRegionArch2AMI:
+    us-east-1:
+      '32': ami-b3345bda
+      '64': ami-05355a6c
+      64Cluster: ami-a73758ce
+      64GPU: ami-cf3758a6
+    us-west-2:
+      '32': ami-1958ce29
+      '64': ami-0358ce33
+      64Cluster: ami-d75bcde7
+      64GPU: NOT_YET_SUPPORTED
+    us-west-1:
+      '32': ami-29fed16c
+      '64': ami-3ffed17a
+      64Cluster: ami-47fed102
+      64GPU: NOT_YET_SUPPORTED
+    eu-west-1:
+      '32': ami-ddc1d7a9
+      '64': ami-c7c0d6b3
+      64Cluster: ami-d1c0d6a5
+      64GPU: ami-45c0d631
+    ap-southeast-1:
+      '32': ami-ccde919e
+      '64': ami-fade91a8
+      64Cluster: ami-18de914a
+      64GPU: NOT_YET_SUPPORTED
+    ap-southeast-2:
+      '32': ami-dd6bfbe7
+      '64': ami-d16bfbeb
+      64Cluster: ami-876bfbbd
+      64GPU: NOT_YET_SUPPORTED
+    ap-northeast-1:
+      '32': ami-2db23d2c
+      '64': ami-39b23d38
+      64Cluster: ami-2db33c2c
+      64GPU: NOT_YET_SUPPORTED
+    sa-east-1:
+      '32': ami-58538945
+      '64': ami-5253894f
+      64Cluster: ami-38538925
+      64GPU: NOT_YET_SUPPORTED
+Resources:
+  WaitCondition:
+    Type: 'AWS::CloudFormation::WaitCondition'
+    DependsOn: Ec2Instance
+    Properties:
+      Handle: !Ref WaitHandle
+      Timeout: '2400'
+  WaitHandle:
+    Type: 'AWS::CloudFormation::WaitConditionHandle'
+  GeneralSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable SSH and HTTP access for the monitoring server
+      Tags:
+        - Key: Name
+          Value: MonitoringServerSG
+      SecurityGroupIngress:
+        - IpProtocol: '6'
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: '6'
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+  MonitoringServerEIP:
+    Type: 'AWS::EC2::EIP'
+    DependsOn: Ec2Instance
+    Properties:
+      InstanceId: !Ref Ec2Instance
+  Ec2Instance:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: MonitoringServerRole
+    Metadata:
+      'AWS::CloudFormation::Init':
+        config:
+          packages:
+            python:
+              awscli: []
+          files:
+            /home/ec2-user/aws_cli_config:
+              content: !Join 
+                - ''
+                - - |
+                    [default]
+                  - region=
+                  - !Ref 'AWS::Region'
+                  - |+
+
+              group: ec2-user
+              mode: '000600'
+              owner: ec2-user
+            /home/ec2-user/bin/jq:
+              source: !Join 
+                - ''
+                - - 'https://'
+                  - !Ref 'AWS::Region'
+                  - '-'
+                  - !Ref Bucket
+                  - .s3.amazonaws.com/
+                  - !Ref Prefix
+                  - static/
+                  - !FindInMap 
+                    - AWSInstanceType2Arch
+                    - !Ref InstanceType
+                    - Arch
+                  - /jq
+              mode: '000700'
+              owner: ec2-user
+              group: ec2-user
+            /opt/awstc/consume-events.sh:
+              source: !Join 
+                - ''
+                - - 'https://'
+                  - !Ref 'AWS::Region'
+                  - '-'
+                  - !Ref Bucket
+                  - .s3.amazonaws.com/
+                  - !Ref Prefix
+                  - static/consume-events.sh
+              mode: '000700'
+              owner: ec2-user
+              group: ec2-user
+            /opt/awstc/mon-server.py:
+              source: !Join 
+                - ''
+                - - 'https://'
+                  - !Ref 'AWS::Region'
+                  - '-'
+                  - !Ref Bucket
+                  - .s3.amazonaws.com/
+                  - !Ref Prefix
+                  - static/mon-server.py
+              mode: '000700'
+              owner: ec2-user
+              group: ec2-user
+            /opt/awstc/poll-instances.sh:
+              source: !Join 
+                - ''
+                - - 'https://'
+                  - !Ref 'AWS::Region'
+                  - '-'
+                  - !Ref Bucket
+                  - .s3.amazonaws.com/
+                  - !Ref Prefix
+                  - static/poll-instances.sh
+              mode: '000700'
+              owner: ec2-user
+              group: ec2-user
+    Properties:
+      IamInstanceProfile: !Ref IamInstanceProfile
+      ImageId: !FindInMap 
+        - AWSRegionArch2AMI
+        - !Ref 'AWS::Region'
+        - !FindInMap 
+          - AWSInstanceType2Arch
+          - !Ref InstanceType
+          - Arch
+      InstanceType: !Ref InstanceType
+      Tags:
+        - Key: Name
+          Value: MonitoringServer
+        - Key: Department
+          Value: IT
+        - Key: Project
+          Value: Sys Ops Training
+        - Key: Cost Center
+          Value: '4000'
+      SecurityGroupIds:
+        - !Ref GeneralSG
+      KeyName: !Ref KeyName
+      UserData: !Base64 
+        'Fn::Join':
+          - ''
+          - - |
+              #!/bin/bash
+            - |
+              # Cleanup Before CfnInit Runs
+            - |
+              yum remove -y aws-cli
+            - |
+              # Get Security Updates Before CfnInit Runs
+            - |
+              yum update -y --security
+            - |
+              # Signal Error to Stack Helper function
+            - |
+              function error_exit 
+            - |
+              {
+            - '  /opt/aws/bin/cfn-signal -e 1 -r "$1" "'
+            - !Ref WaitHandle
+            - |
+              "
+            - |2
+                exit 1
+            - |
+              }
+            - |
+              # Enable command-line completion
+            - |
+              complete -C aws_completer aws
+            - |
+              # Install GCC for Flask speedups
+            - |
+              yum install -y gcc
+            - >
+              # Install packages and write files from AWS::CloudFormation::Init
+              section
+            - '/opt/aws/bin/cfn-init -s '
+            - !Ref 'AWS::StackName'
+            - ' -v -r Ec2Instance '
+            - ' --region '
+            - !Ref 'AWS::Region'
+            - |2
+               &> /home/ec2-user/cfnoutput.txt
+            - |
+              # AWS CLI Config
+            - |
+              export AWS_CONFIG_FILE=/home/ec2-user/aws_cli_config
+            - >
+              echo 'export AWS_CONFIG_FILE=/home/ec2-user/aws_cli_config'  >>
+              /home/ec2-user/.bash_profile
+            - >
+              #Install pip and setuptools. NOTE: Double-install overcomes weird
+              issue w/ initial install.
+            - |
+              easy_install pip
+            - |
+              pip install --upgrade setuptools
+            - |
+              pip install --upgrade setuptools
+            - |
+              # Install python-devel and Flask.
+            - |
+              yum install -y python-devel
+            - |
+              pip install flask
+            - |
+              # Signal Success to CloudFormation Stack WaitHandle
+            - /opt/aws/bin/cfn-signal -e 0 -r "cfn-int setup complete" "
+            - !Ref WaitHandle
+            - |
+              "
+  IamInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref MonitoringServerRole
+  MonitoringServerRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: MonitoringServerPolicy
+          PolicyDocument:
+            Statement:
+              - Action:
+                  - 'cloudwatch:*'
+                Resource:
+                  - '*'
+                Effect: Allow
+              - Action:
+                  - 'ec2:AllocateAddress'
+                  - 'ec2:AssociateAddress'
+                  - 'ec2:AssociateDhcpOptions'
+                  - 'ec2:AssociateRouteTable'
+                  - 'ec2:AttachInternetGateway'
+                  - 'ec2:AttachNetworkInterface'
+                  - 'ec2:AttachVolume'
+                  - 'ec2:AuthorizeSecurityGroupEgress'
+                  - 'ec2:AuthorizeSecurityGroupIngress'
+                  - 'ec2:BundleInstance'
+                  - 'ec2:CancelBundleTask'
+                  - 'ec2:CancelConversionTask'
+                  - 'ec2:CancelExportTask'
+                  - 'ec2:CopySnapshot'
+                  - 'ec2:CreateDhcpOptions'
+                  - 'ec2:CreateImage'
+                  - 'ec2:CreateInstanceExportTask'
+                  - 'ec2:CreateInternetGateway'
+                  - 'ec2:CreateKeyPair'
+                  - 'ec2:CreateNetworkAcl'
+                  - 'ec2:CreateNetworkAclEntry'
+                  - 'ec2:CreateNetworkInterface'
+                  - 'ec2:CreatePlacementGroup'
+                  - 'ec2:CreateRoute'
+                  - 'ec2:CreateRouteTable'
+                  - 'ec2:CreateSecurityGroup'
+                  - 'ec2:CreateSnapshot'
+                  - 'ec2:CreateSpotDatafeedSubscription'
+                  - 'ec2:CreateSubnet'
+                  - 'ec2:CreateTags'
+                  - 'ec2:CreateVolume'
+                  - 'ec2:CreateVpc'
+                  - 'ec2:DeleteDhcpOptions'
+                  - 'ec2:DeleteInternetGateway'
+                  - 'ec2:DeleteKeyPair'
+                  - 'ec2:DeleteNetworkAcl'
+                  - 'ec2:DeleteNetworkAclEntry'
+                  - 'ec2:DeleteNetworkInterface'
+                  - 'ec2:DeletePlacementGroup'
+                  - 'ec2:DeleteRoute'
+                  - 'ec2:DeleteRouteTable'
+                  - 'ec2:DeleteSecurityGroup'
+                  - 'ec2:DeleteSnapshot'
+                  - 'ec2:DeleteSpotDatafeedSubscription'
+                  - 'ec2:DeleteSubnet'
+                  - 'ec2:DeleteTags'
+                  - 'ec2:DeleteVolume'
+                  - 'ec2:DeleteVpc'
+                  - 'ec2:DeleteVpnConnection'
+                  - 'ec2:DeleteVpnGateway'
+                  - 'ec2:DeregisterImage'
+                  - 'ec2:DescribeAddresses'
+                  - 'ec2:DescribeAvailabilityZones'
+                  - 'ec2:DescribeBundleTasks'
+                  - 'ec2:DescribeConversionTasks'
+                  - 'ec2:DescribeCustomerGateways'
+                  - 'ec2:DescribeDhcpOptions'
+                  - 'ec2:DescribeExportTasks'
+                  - 'ec2:DescribeImageAttribute'
+                  - 'ec2:DescribeImages'
+                  - 'ec2:DescribeInstanceAttribute'
+                  - 'ec2:DescribeInstanceStatus'
+                  - 'ec2:DescribeInstances'
+                  - 'ec2:DescribeInternetGateways'
+                  - 'ec2:DescribeKeyPairs'
+                  - 'ec2:DescribeLicenses'
+                  - 'ec2:DescribeNetworkAcls'
+                  - 'ec2:DescribeNetworkInterfaceAttribute'
+                  - 'ec2:DescribeNetworkInterfaces'
+                  - 'ec2:DescribePlacementGroups'
+                  - 'ec2:DescribeRegions'
+                  - 'ec2:DescribeReservedInstances'
+                  - 'ec2:DescribeReservedInstancesOfferings'
+                  - 'ec2:DescribeRouteTables'
+                  - 'ec2:DescribeSecurityGroups'
+                  - 'ec2:DescribeSnapshotAttribute'
+                  - 'ec2:DescribeSnapshots'
+                  - 'ec2:DescribeSubnets'
+                  - 'ec2:DescribeTags'
+                  - 'ec2:DescribeVolumeAttribute'
+                  - 'ec2:DescribeVolumeStatus'
+                  - 'ec2:DescribeVolumes'
+                  - 'ec2:DescribeVpcs'
+                  - 'ec2:DetachInternetGateway'
+                  - 'ec2:DetachNetworkInterface'
+                  - 'ec2:DetachVolume'
+                  - 'ec2:DisassociateAddress'
+                  - 'ec2:DisassociateRouteTable'
+                  - 'ec2:EnableVolumeIO'
+                  - 'ec2:GetConsoleOutput'
+                  - 'ec2:GetPasswordData'
+                  - 'ec2:ImportInstance'
+                  - 'ec2:ImportKeyPair'
+                  - 'ec2:ImportVolume'
+                  - 'ec2:ModifyImageAttribute'
+                  - 'ec2:ModifyInstanceAttribute'
+                  - 'ec2:ModifyNetworkInterfaceAttribute'
+                  - 'ec2:ModifySnapshotAttribute'
+                  - 'ec2:ModifyVolumeAttribute'
+                  - 'ec2:MonitorInstances'
+                  - 'ec2:RebootInstances'
+                  - 'ec2:RegisterImage'
+                  - 'ec2:ReleaseAddress'
+                  - 'ec2:ReplaceNetworkAclAssociation'
+                  - 'ec2:ReplaceNetworkAclEntry'
+                  - 'ec2:ReplaceRoute'
+                  - 'ec2:ReplaceRouteTableAssociation'
+                  - 'ec2:ReportInstanceStatus'
+                  - 'ec2:ResetImageAttribute'
+                  - 'ec2:ResetInstanceAttribute'
+                  - 'ec2:ResetNetworkInterfaceAttribute'
+                  - 'ec2:ResetSnapshotAttribute'
+                  - 'ec2:RevokeSecurityGroupEgress'
+                  - 'ec2:RevokeSecurityGroupIngress'
+                  - 'ec2:RunInstances'
+                  - 'ec2:StartInstances'
+                  - 'ec2:StopInstances'
+                  - 'ec2:TerminateInstances'
+                  - 'ec2:UnmonitorInstances'
+                Resource:
+                  - '*'
+                Effect: Allow
+              - Action:
+                  - 's3:*'
+                Resource:
+                  - '*'
+                Effect: Allow
+              - Action:
+                  - 'sns:*'
+                Resource:
+                  - '*'
+                Effect: Allow
+              - Action:
+                  - 'sqs:*'
+                Resource:
+                  - '*'
+                Effect: Allow
+              - Action:
+                  - 'autoscaling:*'
+                Resource:
+                  - '*'
+                Effect: Allow
+              - Action:
+                  - 'elasticloadbalancing:*'
+                Resource:
+                  - '*'
+                Effect: Allow
+Outputs:
+  qwikLAB:
+    Description: Outputs to be used by qwikLAB
+    Value: !Join 
+      - ''
+      - - '{'
+        - '"UserName":  "ec2-user'
+        - '",'
+        - '"HostDNS": "'
+        - !Ref MonitoringServerEIP
+        - '",'
+        - '"InstanceId": "'
+        - !Ref Ec2Instance
+        - '",'
+        - '"Connection": "ec2-user@'
+        - !Ref MonitoringServerEIP
+        - '"'
+        - '}'
